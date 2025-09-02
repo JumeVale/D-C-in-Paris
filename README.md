@@ -60,7 +60,8 @@
       "Place d'Italie": [48.8362, 2.3613],
       "Boulogne-Billancourt": [48.8297, 2.2547],
       "Neuilly Saint-Jean-Baptiste": [48.8847, 2.2669],
-      "La Defense": [48.8919, 2.2401]
+      "La Defense": [48.8919, 2.2401],
+      "D&C Wurtz": [48.8220, 2.3488]
     };
 
     function getBoostMessage(distanceKm) {

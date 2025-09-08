@@ -47,95 +47,162 @@
   <div id="map"></div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script>
-    const map = L.map('map').setView([48.845, 2.36], 12);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(map);
+<script>
+  const map = L.map('map').setView([48.845, 2.36], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
 
-    const points = {
-      "Bercy": [48.8324, 2.3874],
-      "Gare de Lyon": [48.8412, 2.3723],
-      "Place d'Italie": [48.8362, 2.3613],
-      "Boulogne-Billancourt": [48.8297, 2.2547],
-      "Neuilly Saint-Jean-Baptiste": [48.8847, 2.2669],
-      "La Defense": [48.8919, 2.2401],
-      "D&C Wurtz": [48.8220, 2.3488]
-    };
+  const points = {
+    "Bercy": [48.8324, 2.3874],
+    "Gare de Lyon": [48.8412, 2.3723],
+    "Place d'Italie": [48.8362, 2.3613],
+    "Boulogne-Billancourt": [48.8297, 2.2547],
+    "Neuilly Saint-Jean-Baptiste": [48.8847, 2.2669],
+    "La Défense": [48.8919, 2.2401],
+    "D&C Wurtz": [48.8220, 2.3488]
+  };
 
-    function getBoostMessage(distanceKm) {
-      if (distanceKm < 6) return "No boost required";
-      if (distanceKm < 10) return "Apply €3 boost";
-      if (distanceKm < 15) return "Apply €6 boost";
-      return "Apply €6 boost and inform OPS team";
-    }
+  function getBoostMessage(distanceKm) {
+    if (distanceKm < 6) return "No boost required";
+    if (distanceKm < 10) return "Apply €3 boost";
+    if (distanceKm < 15) return "Apply €6 boost";
+    return "Apply €6 boost and inform OPS team";
+  }
 
-    async function calculateAllRoutes() {
-      const destinationInput = document.getElementById('destination').value;
-      const resultsDiv = document.getElementById('results');
-      resultsDiv.innerHTML = "Calcul en cours...";
-      map.eachLayer(layer => {
-        if (layer instanceof L.Polyline || layer instanceof L.Marker) {
-          map.removeLayer(layer);
-        }
-      });
-
-      try {
-        const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(destinationInput)}`);
-        const geoData = await geoRes.json();
-
-        if (!geoData.length) {
-          resultsDiv.innerHTML = "Adresse introuvable.";
-          return;
-        }
-
-        const destLat = parseFloat(geoData[0].lat);
-        const destLon = parseFloat(geoData[0].lon);
-        const destCoords = [destLat, destLon];
-        L.marker(destCoords).addTo(map).bindPopup("Destination").openPopup();
-
-        const results = await Promise.all(Object.entries(points).map(async ([name, coords]) => {
-          const url = `https://router.project-osrm.org/route/v1/driving/${coords[1]},${coords[0]};${destLon},${destLat}?overview=full&geometries=geojson&alternatives=true`;
-          try {
-            const res = await fetch(url);
-            const data = await res.json();
-            if (!data.routes || !data.routes.length) throw new Error('No route');
-
-            const bestRoute = data.routes.reduce((min, r) => r.duration < min.duration ? r : min, data.routes[0]);
-
-            const distanceKm = bestRoute.distance / 1000;
-            const durationMin = bestRoute.duration / 60;
-            const boost = getBoostMessage(distanceKm);
-
-            L.geoJSON(bestRoute.geometry, { color: 'blue' }).addTo(map);
-            L.marker(coords).addTo(map).bindPopup(name);
-
-            return { name, distanceKm, durationMin, boost };
-          } catch {
-            return { name, error: true };
-          }
-        }));
-
-        const valid = results.filter(r => !r.error);
-        valid.sort((a, b) => a.distanceKm - b.distanceKm);
-
-        let output = '<b>Classement par distance (km)</b><ul>' +
-          valid.map(r => `<li><b>${r.name}</b>: ${r.distanceKm.toFixed(2)} km - ${r.durationMin.toFixed(1)} min<br>${r.boost}</li>`).join('') + '</ul>';
-
-        const errors = results.filter(r => r.error);
-        if (errors.length) {
-          output += '<b>Erreurs :</b><ul>' +
-            errors.map(r => `<li><b>${r.name}</b>: itinéraire non disponible</li>`).join('') + '</ul>';
-        }
-
-        resultsDiv.innerHTML = output;
-
-      } catch (err) {
-        resultsDiv.innerHTML = "Erreur lors du calcul.";
-        console.error(err);
+  // Utilitaires robustes
+  async function fetchJSON(url, { timeoutMs = 12000 } = {}) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (!res.ok) {
+        // Message clair selon le code
+        throw new Error(`HTTP ${res.status}`);
       }
+      // Tente de parser JSON (si HTML renvoyé par erreur, ça throw ici)
+      return await res.json();
+    } finally {
+      clearTimeout(t);
     }
-  </script>
+  }
+
+  function drawRoute(geojson) {
+    try {
+      L.geoJSON(geojson, { color: 'blue' }).addTo(map);
+    } catch (e) {
+      // Ignore un tracé mal formé, mais ne casse pas l'appli
+      console.warn('Impossible d’afficher la géométrie', e);
+    }
+  }
+
+  async function routeOSRM(fromLat, fromLon, toLat, toLon) {
+    // D’abord avec alternatives; si ça échoue, on retente plus simple
+    const base = `https://router.project-osrm.org/route/v1/driving/${fromLon},${fromLat};${toLon},${toLat}`;
+    const params1 = `?overview=full&geometries=geojson&alternatives=true`;
+    const params2 = `?overview=simplified&geometries=geojson&alternatives=false`;
+
+    // Essai 1
+    try {
+      const data = await fetchJSON(base + params1);
+      if (!data || !Array.isArray(data.routes) || data.routes.length === 0) {
+        throw new Error('No route');
+      }
+      return data.routes;
+    } catch (e1) {
+      // Essai 2 (fallback)
+      const data = await fetchJSON(base + params2);
+      if (!data || !Array.isArray(data.routes) || data.routes.length === 0) {
+        throw new Error('No route');
+      }
+      return data.routes;
+    }
+  }
+
+  async function calculateAllRoutes() {
+    const destinationInput = document.getElementById('destination').value.trim();
+    const resultsDiv = document.getElementById('results');
+    resultsDiv.innerHTML = "Calcul en cours...";
+
+    // Nettoyage des polylignes/markers précédents mais on garde les tuiles
+    map.eachLayer(layer => {
+      if (layer instanceof L.Polyline || (layer instanceof L.Marker && !layer._url)) {
+        map.removeLayer(layer);
+      }
+    });
+
+    // Géocodage (Nominatim : ajouter &limit=1 &accept-language=fr)
+    let destLat, destLon;
+    try {
+      if (!destinationInput) throw new Error('empty');
+      const geoUrl = `https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=fr&q=${encodeURIComponent(destinationInput)}`;
+      const geoData = await fetchJSON(geoUrl, { timeoutMs: 15000 });
+      if (!Array.isArray(geoData) || geoData.length === 0) throw new Error('notfound');
+      destLat = parseFloat(geoData[0].lat);
+      destLon = parseFloat(geoData[0].lon);
+    } catch (e) {
+      resultsDiv.innerHTML = "Adresse introuvable ou service de géocodage indisponible.";
+      console.error('Erreur Nominatim:', e);
+      return;
+    }
+
+    const destCoords = [destLat, destLon];
+    L.marker(destCoords).addTo(map).bindPopup("Destination").openPopup();
+
+    const results = [];
+
+    // IMPORTANT : sérialiser pour éviter le ratelimiting OSRM
+    for (const [name, coords] of Object.entries(points)) {
+      try {
+        const routes = await routeOSRM(coords[0], coords[1], destLat, destLon);
+        // Choisir la meilleure route (durée mini)
+        const bestRoute = routes.reduce((min, r) => (r.duration < min.duration ? r : min), routes[0]);
+        const distanceKm = bestRoute.distance / 1000;
+        const durationMin = bestRoute.duration / 60;
+        const boost = getBoostMessage(distanceKm);
+
+        // Tracé
+        if (bestRoute.geometry) {
+          drawRoute(bestRoute.geometry);
+        }
+
+        // Marker origine
+        L.marker(coords).addTo(map).bindPopup(name);
+
+        results.push({ name, distanceKm, durationMin, boost, ok: true });
+      } catch (e) {
+        console.warn(`Erreur OSRM pour ${name}:`, e);
+        results.push({ name, ok: false, reason: e.message || 'Erreur inconnue' });
+      }
+
+      // Petite pause (200ms) pour être gentil avec le serveur public
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    // Affichage
+    const valid = results.filter(r => r.ok).sort((a, b) => a.distanceKm - b.distanceKm);
+    let output = '<b>Classement par distance (km)</b>';
+    if (valid.length) {
+      output += '<ul>' + valid.map(r =>
+        `<li><b>${r.name}</b>: ${r.distanceKm.toFixed(2)} km - ${r.durationMin.toFixed(1)} min<br>${r.boost}</li>`
+      ).join('') + '</ul>';
+    } else {
+      output += '<p>Aucun itinéraire disponible pour le moment.</p>';
+    }
+
+    const errors = results.filter(r => !r.ok);
+    if (errors.length) {
+      output += '<b>Erreurs :</b><ul>' + errors.map(r =>
+        `<li><b>${r.name}</b> : ${r.reason}</li>`
+      ).join('') + '</ul>';
+    }
+
+    resultsDiv.innerHTML = output;
+  }
+
+  // Rendre la fonction globale pour le bouton
+  window.calculateAllRoutes = calculateAllRoutes;
+</script>
 </body>
 </html>

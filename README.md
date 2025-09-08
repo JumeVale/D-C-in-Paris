@@ -4,10 +4,7 @@
   <meta charset="UTF-8" />
   <title>Classement des trajets</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link 
-    rel="stylesheet" 
-    href="https://unpkg.com/leaflet/dist/leaflet.css" 
-  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
     html, body {
       height: 100%;
@@ -51,28 +48,22 @@
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
-    // 🔑 Clé OpenRouteService
-    const API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjYzNDI2YzNkNmFjYjQ2ZTJiMWQ1NjA5ZmE3YWQ3OWU1IiwiaCI6Im11cm11cjY0In0=";
-
-    // Initialisation de la carte
     const map = L.map('map').setView([48.845, 2.36], 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    // Points de départ
     const points = {
       "Bercy": [48.8324, 2.3874],
       "Gare de Lyon": [48.8412, 2.3723],
       "Place d'Italie": [48.8362, 2.3613],
       "Boulogne-Billancourt": [48.8297, 2.2547],
       "Neuilly Saint-Jean-Baptiste": [48.8847, 2.2669],
-      "La Défense": [48.8919, 2.2401],
+      "La Defense": [48.8919, 2.2401],
       "D&C Wurtz": [48.8220, 2.3488]
     };
 
-    // Fonction boost
     function getBoostMessage(distanceKm) {
       if (distanceKm < 6) return "No boost required";
       if (distanceKm < 10) return "Apply €3 boost";
@@ -80,44 +71,17 @@
       return "Apply €6 boost and inform OPS team";
     }
 
-    // Requête OpenRouteService
-    async function fetchRouteORS(startCoords, destCoords) {
-      const url = "https://api.openrouteservice.org/v2/directions/driving-car";
-      const body = {
-        coordinates: [
-          [startCoords[1], startCoords[0]], // ORS attend [lon, lat]
-          [destCoords[1], destCoords[0]]
-        ]
-      };
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Authorization": API_KEY,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (!res.ok) throw new Error("ORS request failed");
-      return res.json();
-    }
-
-    // Calcul des trajets
     async function calculateAllRoutes() {
       const destinationInput = document.getElementById('destination').value;
       const resultsDiv = document.getElementById('results');
       resultsDiv.innerHTML = "Calcul en cours...";
-
-      // On efface anciens tracés et marqueurs
       map.eachLayer(layer => {
         if (layer instanceof L.Polyline || layer instanceof L.Marker) {
-          if (!layer._url) map.removeLayer(layer); // garde le fond de carte
+          map.removeLayer(layer);
         }
       });
 
       try {
-        // Géocodage avec Nominatim
         const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(destinationInput)}`);
         const geoData = await geoRes.json();
 
@@ -131,29 +95,28 @@
         const destCoords = [destLat, destLon];
         L.marker(destCoords).addTo(map).bindPopup("Destination").openPopup();
 
-        // Calcul pour chaque point
         const results = await Promise.all(Object.entries(points).map(async ([name, coords]) => {
+          const url = `https://router.project-osrm.org/route/v1/driving/${coords[1]},${coords[0]};${destLon},${destLat}?overview=full&geometries=geojson&alternatives=true`;
           try {
-            const data = await fetchRouteORS(coords, destCoords);
+            const res = await fetch(url);
+            const data = await res.json();
+            if (!data.routes || !data.routes.length) throw new Error('No route');
 
-            const summary = data.features[0].properties.summary;
-            const distanceKm = summary.distance / 1000;
-            const durationMin = summary.duration / 60;
+            const bestRoute = data.routes.reduce((min, r) => r.duration < min.duration ? r : min, data.routes[0]);
+
+            const distanceKm = bestRoute.distance / 1000;
+            const durationMin = bestRoute.duration / 60;
             const boost = getBoostMessage(distanceKm);
 
-            // Ajout sur la carte
-            const geometry = data.features[0].geometry;
-            L.geoJSON(geometry, { color: 'blue' }).addTo(map);
+            L.geoJSON(bestRoute.geometry, { color: 'blue' }).addTo(map);
             L.marker(coords).addTo(map).bindPopup(name);
 
             return { name, distanceKm, durationMin, boost };
-          } catch (err) {
-            console.error("Erreur ORS pour " + name, err);
+          } catch {
             return { name, error: true };
           }
         }));
 
-        // Classement
         const valid = results.filter(r => !r.error);
         valid.sort((a, b) => a.distanceKm - b.distanceKm);
 

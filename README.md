@@ -54,15 +54,17 @@
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map);
 
-  const points = {
-   "Bercy": [48.8324, 2.3874],
-   "Gare de Lyon": [48.8412, 2.3723],
-   "Gare du Nord": [48.8809, 2.3553],
-   "Place d'Italie": [48.8362, 2.3613],
-   "Boulogne-Billancourt": [48.8297, 2.2547],
-   "Neuilly Saint-Jean-Baptiste": [48.8847, 2.2669],
-   "La Défense": [48.8919, 2.2401]
-  };
+const points = {
+  "Bercy": [48.8324, 2.3874],
+  "Gare de Lyon": [48.8412, 2.3723],
+  "Gare du Nord": [48.8809, 2.3553],
+  "Champs Elysées": [48.8705, 2.3033],
+  "Place d'Italie": [48.8362, 2.3613],
+  "Boulogne-Billancourt": [48.8297, 2.2547],
+  "Neuilly Saint-Jean-Baptiste": [48.8847, 2.2669],
+  "La Défense": [48.8919, 2.2401],
+  "D&C Wurtz": [48.8220, 2.3488]
+};
 
   function getBoostMessage(distanceKm) {
     if (distanceKm < 6) return "No boost required";
